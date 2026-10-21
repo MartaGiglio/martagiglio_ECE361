@@ -33,8 +33,10 @@ Both switches are specified as press events.
 
 SPRAY_OK is on when both conditions are satisfied:
 
-- Temperature is between 18 and 30 degrees Celsius, inclusive.
-- Relative humidity is below 70%.
+- Temperature is between 18.0 and 30.0 °C. **Decision:** both limits
+  are included (18.0 and 30.0 give SPRAY_OK on). 
+- Relative humidity is below 70%. **Decision:** strictly below
+  (70.0 %RH gives SPRAY_OK off).
 
 During CURE, the heater turns on below 58 degrees Celsius and turns
 off at 60 degrees Celsius. The behavior between these thresholds will
@@ -128,3 +130,44 @@ modules are implemented:
 - The precise definition of report totals and percentages.
 - The behavior of the circular buffer when it is full.
 - The representation of time and the implications of a 32-bit time_t.
+
+## 7. Interfaces (week 3)
+
+### reading_t and sensor_read
+
+`reading_t` holds the timestamp (`time_t`), the temperature in °C
+(`temp_c`) and the humidity in %RH (`rh_pct`), both as `float`.
+
+`int sensor_read(uint32_t *base, time_t timestamp, reading_t *reading)`
+reads TEMP_REG and HUMID_REG, converts them with the AHT20 formulas and
+rounds to 0.1 °C and 0.1 %RH. Return value: 0 = success, -1 = NULL
+argument, otherwise the `rc` code reported by iom361 (1, 2, 3 or 5).
+The module does not print.
+
+### record_t
+
+`record_t` holds three things: the `reading_t`, the FSM state at that
+moment (`int`, numbered as in section 3 below), and the status word
+(`uint32_t`).
+
+`record_compare` orders records by `reading.timestamp` only (key K1).
+It returns a negative value, zero, or a positive value.
+
+### State numbering
+
+IDLE = 0, PURGE = 1, SPRAY = 2, FLASH_OFF = 3, CURE = 4.
+
+### Status word bit layout
+
+| Bits | Field |
+|---|---|
+| 0-2 | state (0..4) |
+| 3 | unused (0) |
+| 4 | EXHAUST_FAN |
+| 5 | HEATER |
+| 6 | SPRAY_OK |
+| 7 | spray conditions met |
+| 8-31 | unused (0) |
+
+Example: PURGE with the fan on = 0x00000011. Packing and unpacking use
+`get_field` and `set_field` from HW1 (copied into `bits.c`).
