@@ -1,0 +1,4 @@
+*.o
+replay
+test_hw06
+actual.tmp
