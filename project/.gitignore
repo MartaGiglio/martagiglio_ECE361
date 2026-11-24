@@ -1,0 +1,13 @@
+# Compiled object files
+*.o
+
+# Executable program
+booth
+
+# Compiled test executables
+tests/test_status
+tests/test_fsm
+tests/test_store
+tests/test_aux
+tests/test_sensor
+tests/test_report

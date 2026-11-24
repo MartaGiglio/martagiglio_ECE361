@@ -1,0 +1,5 @@
+# More than 32 readings to exercise the circular buffer
+start 1764000000
+
+0   23.4  55.6  0x0
+40  24.0  56.0  0x0

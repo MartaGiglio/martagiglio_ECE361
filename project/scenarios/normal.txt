@@ -1,0 +1,9 @@
+# Normal complete paint booth cycle
+start 1764000000
+
+# tick temperature humidity switches
+0   23.4  55.6  0x1
+1   23.4  55.6  0x0
+61  23.4  55.6  0x2
+62  23.4  55.6  0x0
+481 23.4 55.6 0x0

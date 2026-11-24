@@ -1,50 +1,10 @@
-# Project 24 — Paint Booth
+# ECE 361 Fall 2026 — Project 24: Paint Booth
 
-## 1. Project overview
+## 1. Project Overview
 
-The Paint Booth program models an automotive paint booth as a process
-sequencer. It uses switch inputs, sensor readings, and LED outputs to
-represent the stages of a painting cycle.
+The Paint Booth is an embedded process sequencer that models an automotive paint booth. It reads temperature and humidity sensors, monitors two switches, controls three LEDs and an RGB LED, and records the system state over time.
 
-The implementation will be developed incrementally throughout the term.
-This document describes the initial architecture and will be expanded as
-the project progresses.
-
-## 2. Inputs and outputs
-
-### Switch inputs
-
-| Bit | Name | Meaning |
-|---|---|---|
-| 0 | START | Requests the start of a painting cycle |
-| 1 | SPRAY_DONE | Signals that spraying is complete |
-
-Both switches are specified as press events.
-
-### LED outputs
-
-| Bit | Name | Meaning |
-|---|---|---|
-| 0 | EXHAUST_FAN | Exhaust fan indicator |
-| 1 | HEATER | Heater indicator |
-| 2 | SPRAY_OK | Indicates that spraying conditions are acceptable |
-
-### Sensor conditions
-
-SPRAY_OK is on when both conditions are satisfied:
-
-- Temperature is between 18.0 and 30.0 °C. **Decision:** both limits
-  are included (18.0 and 30.0 give SPRAY_OK on). 
-- Relative humidity is below 70%. **Decision:** strictly below
-  (70.0 %RH gives SPRAY_OK off).
-
-During CURE, the heater turns on below 58 degrees Celsius and turns
-off at 60 degrees Celsius. The behavior between these thresholds will
-be specified as part of the implementation.
-
-## 3. States
-
-The process has five states:
+The system follows five sequential states:
 
 1. IDLE
 2. PURGE
@@ -52,122 +12,555 @@ The process has five states:
 4. FLASH_OFF
 5. CURE
 
-The initial state is IDLE.
-
-The specified timing and transition requirements are:
-
-- IDLE waits for START.
-- PURGE lasts at least 60 ticks and cannot finish until SPRAY_OK is on.
-- SPRAY waits for SPRAY_DONE.
-- FLASH_OFF lasts 120 ticks.
-- CURE lasts 300 ticks and then returns to IDLE.
+The program is implemented in C using the supplied IOM361 hardware simulation library.
 
 One tick represents one second.
 
-The complete transition table and event definitions will be added when
-the FSM is implemented.
+## 2. Hardware Inputs and Outputs
 
-## 4. Module architecture
+### 2.1 Switches
+
+The system uses two switches:
+
+| Bit | Name | Type | Meaning |
+|---|---|---|---|
+| 0 | START | Press event | Starts a new paint cycle |
+| 1 | SPRAY_DONE | Press event | Indicates that spraying is complete |
+
+A press event is detected when a switch changes from 0 to 1.
+
+The program uses the current and previous switch values to detect rising edges:
+
+- Pressed: current = 1, previous = 0.
+- Released: current = 0, previous = 1.
+
+Keeping a switch on does not generate repeated events.
+
+### 2.2 LEDs
+
+| Bit | Name | Meaning |
+|---|---|---|
+| 0 | EXHAUST_FAN | Exhaust fan indicator |
+| 1 | HEATER | Heater indicator |
+| 2 | SPRAY_OK | Spraying conditions are acceptable |
+
+The exhaust fan is active in PURGE and FLASH_OFF.
+
+The heater is controlled during CURE.
+
+SPRAY_OK is calculated from the current sensor readings.
+
+### 2.3 RGB LED
+
+The RGB LED indicates the current state.
+
+| State | Color | RGB |
+|---|---|---|
+| IDLE | Blue | (0, 0, 255) |
+| PURGE | Green | (0, 255, 0) |
+| SPRAY | Red | (255, 0, 0) |
+| FLASH_OFF | Orange | (255, 165, 0) |
+| CURE | Yellow | (255, 255, 0) |
+
+Each state has a distinct color.
+
+## 3. Sensor Conditions
+
+The sensor module reads the temperature and humidity registers.
+
+The conversion formulas are:
+
+Temperature:
+
+T = (ST / 2^20) × 200 − 50
+
+Relative humidity:
+
+RH = (SRH / 2^20) × 100
+
+The resulting values are rounded to one decimal place.
+
+### 3.1 SPRAY_OK
+
+SPRAY_OK is true when both conditions are satisfied:
+
+- Temperature is between 18.0 °C and 30.0 °C, inclusive.
+- Relative humidity is strictly below 70.0%.
+
+Therefore:
+
+- 18.0 °C: acceptable.
+- 30.0 °C: acceptable.
+- 70.0% RH: not acceptable.
+
+### 3.2 Heater Hysteresis
+
+During CURE, the heater uses two temperature thresholds:
+
+- Below 58.0 °C: heater turns ON.
+- At or above 60.0 °C: heater turns OFF.
+- Between 58.0 °C and 60.0 °C: heater keeps its previous condition.
+
+This is hysteresis. It prevents the heater from rapidly switching on and off near a single temperature threshold.
+
+The heater is OFF outside CURE.
+
+## 4. Finite State Machine
+
+### 4.1 States
+
+| State | Description |
+|---|---|
+| IDLE | Booth is inactive and waits for START |
+| PURGE | Exhaust fan clears the booth air |
+| SPRAY | Painter performs the spraying operation |
+| FLASH_OFF | Solvent evaporates while the fan runs |
+| CURE | Paint is heated for the curing phase |
+
+The initial state is IDLE.
+
+### 4.2 Events
+
+| Event | Meaning |
+|---|---|
+| EVENT_NONE | No event |
+| EVENT_START | Rising edge on START |
+| EVENT_PURGE_READY | PURGE has lasted at least 60 ticks and SPRAY_OK is true |
+| EVENT_SPRAY_DONE | Rising edge on SPRAY_DONE |
+| EVENT_FLASH_DONE | FLASH_OFF has lasted 120 ticks |
+| EVENT_CURE_DONE | CURE has lasted 300 ticks |
+
+### 4.3 Transition Table
+
+The FSM uses a two-dimensional transition table indexed by the current state and event.
+
+Each entry contains the next state and an action.
+
+| Current State | Event | Next State | Action |
+|---|---|---|---|
+| IDLE | EVENT_START | PURGE | ACTION_START_PURGE |
+| PURGE | EVENT_PURGE_READY | SPRAY | ACTION_START_SPRAY |
+| SPRAY | EVENT_SPRAY_DONE | FLASH_OFF | ACTION_START_FLASH_OFF |
+| FLASH_OFF | EVENT_FLASH_DONE | CURE | ACTION_START_CURE |
+| CURE | EVENT_CURE_DONE | IDLE | ACTION_END_CYCLE |
+
+All other state/event combinations leave the current state unchanged and produce ACTION_NONE.
+
+### 4.4 State Diagram
+
+```text
+                 START
+        +----------------------+
+        |                      v
+     +------+              +-------+
+     | IDLE |              | PURGE |
+     +------+              +-------+
+        ^                       |
+        |                       | At least 60 ticks
+        |                       | and SPRAY_OK
+        |                       v
+     +------+              +-------+
+     | CURE |              | SPRAY |
+     +------+              +-------+
+        ^                       |
+        |                       | SPRAY_DONE
+        |                       v
+        |                  +-----------+
+        +------------------| FLASH_OFF |
+           300 ticks       +-----------+
+                                |
+                                | 120 ticks
+                                |
+                                +-------> CURE
+```
+
+The normal sequence is:
+
+IDLE → PURGE → SPRAY → FLASH_OFF → CURE → IDLE.
+
+### 4.5 Decisions for Unspecified Situations
+
+The assignment leaves some situations open to implementation decisions.
+
+The following decisions are used:
+
+1. SPRAY_DONE during PURGE is ignored. The painter cannot finish a spraying operation that has not started.
+2. START pressed outside IDLE is ignored.
+3. If SPRAY_OK becomes false during SPRAY, the system remains in SPRAY. The SPRAY_OK LED indicates the current sensor condition, but the FSM waits for SPRAY_DONE.
+4. PURGE cannot end before 60 ticks, even if SPRAY_OK becomes true earlier.
+5. If SPRAY_OK is false after 60 ticks, PURGE continues until the condition becomes true.
+6. If the heater never reaches 60.0 °C, CURE still ends after 300 ticks. The duration is fixed by the operating rule.
+7. Switches held ON do not generate repeated press events. They must be released and pressed again to generate another event.
+
+These decisions keep the sequence deterministic and prevent unexpected switch activity from skipping phases.
+
+## 5. Status Word
+
+The system stores its status in one 32-bit unsigned integer (`uint32_t`).
+
+The bit layout is:
+
+| Bits | Field | Meaning |
+|---|---|---|
+| 0–2 | State | Current FSM state |
+| 3 | Unused | Always 0 |
+| 4 | EXHAUST_FAN | Fan indicator |
+| 5 | HEATER | Heater indicator |
+| 6 | SPRAY_OK | Spraying conditions acceptable |
+| 7 | Conditions met | Sensor conditions satisfied |
+| 8–31 | Unused | Always 0 |
+
+The state values are:
+
+- IDLE = 0
+- PURGE = 1
+- SPRAY = 2
+- FLASH_OFF = 3
+- CURE = 4
+
+The status module uses the `get_field` and `set_field` functions from the earlier coursework to pack and unpack the fields.
+
+Example:
+
+PURGE with the exhaust fan ON:
+
+State = 1
+Fan = 1
+
+Status word = 0x00000011
+
+Unused bits must remain zero.
+
+## 6. Data Structures
+
+### 6.1 Record Type
+
+Each stored record contains:
+
+- A sensor reading.
+- The FSM state at that timestamp.
+- The packed status word.
+
+The structure is:
+
+```c
+typedef struct {
+    reading_t reading;
+    int state;
+    uint32_t status;
+} record_t;
+```
+
+The timestamp is the key used to order records.
+
+The `record_compare` function compares only the timestamps and returns a negative value, zero, or a positive value.
+
+Duplicate timestamps are rejected.
+
+### 6.2 Store: AVL Binary Search Tree
+
+The store is an opaque abstract data type.
+
+The header declares:
+
+```c
+typedef struct store store_t;
+```
+
+Only `store.c` knows the internal structure.
+
+The implementation uses an AVL tree, a self-balancing binary search tree.
+
+The tree is ordered by timestamp.
+
+#### Why AVL?
+
+Timestamps arrive in increasing order.
+
+In a normal, unbalanced binary search tree, inserting increasing timestamps would create a structure similar to a linked list.
+
+For N records:
+
+- Search could require O(N) operations.
+- Insertion could require O(N) operations.
+- Tree height could become N.
+
+The AVL tree automatically maintains balance using rotations.
+
+Its operations have these expected worst-case complexities:
+
+| Operation | Complexity |
+|---|---|
+| Find | O(log N) |
+| Insert | O(log N) |
+| In-order walk | O(N) |
+| Count | O(1) |
+| Height | O(1) |
+| Destroy | O(N) |
+
+The implementation supports:
+
+- Creation.
+- Insertion.
+- Search by timestamp.
+- In-order traversal with a callback.
+- Record count.
+- Tree height.
+- Destruction.
+
+### 6.3 Auxiliary Circular Buffer
+
+The auxiliary module stores the most recent 32 sensor readings.
+
+It uses a fixed-size array:
+
+```c
+#define AUX_CAPACITY 32
+```
+
+The structure maintains:
+
+- `readings[32]`: the fixed array.
+- `head`: index of the newest reading.
+- `count`: number of valid entries.
+
+When the buffer is empty, the first reading is stored at index 0.
+
+For each new reading, the head advances:
+
+```c
+head = (head + 1) % AUX_CAPACITY;
+```
+
+When the buffer is full, the next insertion overwrites the oldest reading.
+
+The `aux_get` function returns the i-th newest reading:
+
+- Index 0: newest reading.
+- Index 1: second newest.
+- Index 31: oldest reading when full.
+
+The main operations have the following complexity:
+
+| Operation | Complexity |
+|---|---|
+| Create | O(1) |
+| Add | O(1) |
+| Get i-th newest | O(1) |
+| Count | O(1) |
+| Is full | O(1) |
+| Destroy | O(1) |
+
+#### Alternative: Linked List
+
+A linked list could also store the most recent readings.
+
+However, maintaining a fixed limit of 32 entries would require allocating and freeing nodes as readings arrive.
+
+Finding an arbitrary reading would require O(N) traversal.
+
+The circular buffer is more appropriate because:
+
+- Its capacity is fixed.
+- It does not require dynamic allocation for each reading.
+- Insertion is O(1).
+- Access by relative age is O(1).
+- Memory usage is predictable.
+
+## 7. Report Definition
+
+The report calculates the total time spent in each of the five states.
+
+It also calculates the percentage of total recorded time represented by each state.
+
+Records are traversed in timestamp order.
+
+For every pair of consecutive records:
+
+1. Calculate the difference between their timestamps.
+2. Add that duration to the state of the earlier record.
+
+The total duration is the difference between the last and first timestamps.
+
+The percentage is:
+
+Percentage = (State duration / Total duration) × 100
+
+Every state appears in the report, including states never entered. A state that was never entered has zero ticks and zero percent.
+
+The last record does not add extra time because there is no later reading to establish another interval.
+
+If there are fewer than two records, the total duration is zero and all state durations and percentages are zero.
+
+The report module accesses records through the public `store.h` interface only.
+
+## 8. Time Representation
+
+The program uses `time_t` to represent Unix time: seconds since 1 January 1970, 00:00:00 UTC.
+
+The scenario file provides the starting timestamp.
+
+Each tick advances time by one second.
+
+The timestamp for a reading is:
+
+```c
+timestamp = start_time + tick;
+```
+
+The program uses `gmtime()` and `strftime()` to format timestamps in UTC.
+
+UTC ensures that traces are independent of the computer's local time zone.
+
+### The Year 2038 Problem
+
+If `time_t` is a signed 32-bit integer, its maximum value is 2,147,483,647.
+
+This corresponds to 19 January 2038 at 03:14:07 UTC.
+
+One second later, the value overflows.
+
+On systems using signed 32-bit `time_t`, this can cause timestamps to wrap to a negative value and represent an incorrect date.
+
+A 64-bit `time_t` avoids this problem for practical purposes.
+
+The project uses the system's `time_t` type rather than assuming a fixed integer width.
+
+## 9. Program Architecture
 
 ### main.c
 
-Coordinates initialization, the clock, input acquisition, state-machine
-execution, output updates, record storage, and program modes.
+The main program coordinates the system.
 
-### sensor.c and sensor.h
+Its responsibilities include:
 
-Define the sensor-reading interface. Sensor readings include a timestamp,
-temperature, and relative humidity.
+1. Parse the command-line arguments.
+2. Read the scenario file.
+3. Initialize IOM361.
+4. Initialize the store and auxiliary buffer.
+5. Advance the simulated clock.
+6. Set the simulated sensor and switch values.
+7. Read the sensors.
+8. Detect switch press events.
+9. Generate FSM events.
+10. Execute the FSM transition.
+11. Update LEDs and RGB LED.
+12. Pack the status word.
+13. Store the current record.
+14. Update the auxiliary buffer.
+15. Print the trace or the final report.
 
-### fsm.c and fsm.h
+The program supports two modes:
 
-Define the finite-state machine, its states, events, and transition logic.
+```bash
+./booth scenario.txt
+```
 
-### store.c and store.h
+Prints one trace line per tick.
 
-Define the interface for storing and retrieving timestamped records.
-The internal data structure will evolve during the term.
+```bash
+./booth scenario.txt --report
+```
 
-### aux.c and aux.h
+Replays the scenario and prints only the report.
 
-Define the interface for retaining the most recent sensor readings in a
-fixed-size circular buffer of 32 entries.
+### Module Responsibilities
 
-### report.c and report.h
-
-Define the reporting functionality, including total ticks spent in each
-state and the percentage of total ticks represented by each state.
-
-### iom361_r4.c and iom361_r4.h
-
-Provide the supplied IOM361 library used to interface with the simulated
-switches, sensors, and LEDs. These supplied files will be preserved.
-
-## 5. Development plan
-
-The project will be developed incrementally according to the course plan:
-
-- Week 2: module stubs, Makefile, ASSIGNMENT.md, and initial SPEC.md.
-- Week 3: sensor and store interfaces, and status-word layout.
-- Week 4: data types and initial store implementation.
-- Week 5: FSM transition table and scenarios 1, 3, and 4.
-- Week 6: IOM361 registers, clock, main program, trace, and scenarios 5 and 7.
-- Week 7: circular buffer and scenario 2.
-- Week 8: binary search tree implementation of the store.
-- Week 9: report implementation, scenario 6, and remaining unit tests.
-- Week 10: final testing, hardening, and completion of this specification.
-
-## 6. Open design decisions
-
-The following decisions must be documented and tested as the relevant
-modules are implemented:
-
-- Exact FSM event definitions and transition behavior for unspecified cases.
-- How switch press events are detected.
-- The status-word bit layout and unused-bit behavior.
-- The RGB LED color associated with each state.
-- The timestamp ordering and handling of duplicate timestamps.
-- The precise definition of report totals and percentages.
-- The behavior of the circular buffer when it is full.
-- The representation of time and the implications of a 32-bit time_t.
-
-## 7. Interfaces (week 3)
-
-### reading_t and sensor_read
-
-`reading_t` holds the timestamp (`time_t`), the temperature in °C
-(`temp_c`) and the humidity in %RH (`rh_pct`), both as `float`.
-
-`int sensor_read(uint32_t *base, time_t timestamp, reading_t *reading)`
-reads TEMP_REG and HUMID_REG, converts them with the AHT20 formulas and
-rounds to 0.1 °C and 0.1 %RH. Return value: 0 = success, -1 = NULL
-argument, otherwise the `rc` code reported by iom361 (1, 2, 3 or 5).
-The module does not print.
-
-### record_t
-
-`record_t` holds three things: the `reading_t`, the FSM state at that
-moment (`int`, numbered as in section 3 below), and the status word
-(`uint32_t`).
-
-`record_compare` orders records by `reading.timestamp` only (key K1).
-It returns a negative value, zero, or a positive value.
-
-### State numbering
-
-IDLE = 0, PURGE = 1, SPRAY = 2, FLASH_OFF = 3, CURE = 4.
-
-### Status word bit layout
-
-| Bits | Field |
+| Module | Responsibility |
 |---|---|
-| 0-2 | state (0..4) |
-| 3 | unused (0) |
-| 4 | EXHAUST_FAN |
-| 5 | HEATER |
-| 6 | SPRAY_OK |
-| 7 | spray conditions met |
-| 8-31 | unused (0) |
+| main.c | Coordinates the complete simulation |
+| sensor.c | Reads and converts sensor values |
+| fsm.c | Defines states, events, and transitions |
+| store.c | Stores timestamped records in an AVL tree |
+| aux.c | Maintains the circular buffer |
+| report.c | Calculates state durations and percentages |
+| status.c | Packs and unpacks the status word |
+| bits.c | Provides bit-field operations |
+| iom361_r4.c | Supplied hardware simulation |
 
-Example: PURGE with the fan on = 0x00000011. Packing and unpacking use
-`get_field` and `set_field` from HW1 (copied into `bits.c`).
+The scenario replay in `main.c` controls the simulated environment using `_iom361_set_sensor1()` and `_iom361_set_switches()`.
+
+The sensor and FSM modules do not directly modify the simulated environment.
+
+## 10. Scenario Format and Trace
+
+A scenario file contains:
+
+1. A starting Unix timestamp.
+2. A sequence of readings and switch values associated with ticks.
+
+Lines beginning with `#` are comments.
+
+The values remain unchanged between scenario entries.
+
+Example:
+
+```text
+start 1791273600
+
+# tick temperature humidity switches
+0 22.0 50.0 0x0
+5 22.0 50.0 0x1
+6 22.0 50.0 0x0
+60 23.0 50.0 0x0
+```
+
+The trace contains one line per simulated tick.
+
+Example:
+
+```text
+2026-10-06 08:00:46 state=PURGE temp=22.0 rh=50.0 leds=0x1 status=0x00000011
+```
+
+The trace includes:
+
+- UTC timestamp.
+- Current state.
+- Temperature.
+- Relative humidity.
+- LED values.
+- Packed status word.
+
+## 11. Design Evaluation: State Structure
+
+The five states represent the physical phases of the paint booth in a clear sequence.
+
+Keeping PURGE, SPRAY, FLASH_OFF, and CURE separate makes the timing and output behavior easier to understand and test.
+
+The state machine also prevents the process from skipping required phases.
+
+One possible alternative would be to combine some phases into a more general state with additional flags. However, this would make the transition logic more complicated and less readable.
+
+The five-state design is therefore appropriate for this process sequencer because each phase has different timing requirements and hardware outputs.
+
+## 12. Testing Strategy
+
+The project uses unit tests and scenario tests.
+
+Unit tests verify individual modules:
+
+- Status packing and unpacking.
+- FSM transitions.
+- AVL tree insertion, searching, ordering, and balancing.
+- Circular buffer behavior.
+- Sensor conversion.
+- Report calculations.
+
+Scenario tests verify the complete system under realistic sequences of sensor readings and switch inputs.
+
+The build uses:
+
+```bash
+gcc -std=c11 -Wall -Wextra
+```
+
+Unit tests are also compiled with AddressSanitizer and UndefinedBehaviorSanitizer.
+
+The complete test suite is executed using:
+
+```bash
+make test
+```
+
+The project must compile without warnings and pass all tests.

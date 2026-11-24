@@ -1,0 +1,7 @@
+Paint Booth Report
+------------------
+IDLE        0 ticks  0.00%
+PURGE       60 ticks  20.00%
+SPRAY       2 ticks  0.67%
+FLASH_OFF   120 ticks  40.00%
+CURE        118 ticks  39.33%
